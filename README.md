@@ -10,7 +10,6 @@ URL ini bukan rahasia. Keamanan dijaga oleh token sesi dan pengecekan peran di s
 ```
 index.html
 css/style.css
-templat/*.xlsx (templat impor Excel)
 js/config.js  js/api.js  js/ui.js  js/pages1.js  js/pages2.js  js/kumbang.js  js/app.js
 ```
 Panduan lengkap: lihat PANDUAN-INSTALASI.md (dikirim terpisah).

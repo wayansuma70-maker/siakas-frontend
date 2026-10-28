@@ -76,7 +76,7 @@ Pages.laporan = async v => {
 function modalImpor(o) {
   let hasil = { rows: [], peringatan: [], kolom: [], header: true }, sibuk = false;
   const m = modal({ title: o.judul, wide: true, body: `<p class="sm" style="margin-top:0">${o.petunjuk}</p>
-    <div class="row mb"><a class="btn o sm" href="${o.tplXlsx}" download>${ic('download', 12)} Templat Excel (.xlsx)</a><button class="btn o sm" id="itc">${ic('download', 12)} Templat CSV</button></div>
+    <div class="row mb"><button class="btn o sm" id="itx">${ic('download', 12)} Templat Excel (.xlsx)</button><button class="btn o sm" id="itc">${ic('download', 12)} Templat CSV</button></div>
     <div class="drop" id="idrop" style="padding:18px"><div class="mono sm b">${ic('upload', 18)} [PILIH ATAU TARIK BERKAS EXCEL / CSV KE SINI]</div><div class="sm sub">.xlsx · .csv · .txt — lembar pertama dibaca</div><input type="file" id="ifile" class="hide" accept=".xlsx,.xlsm,.xls,.csv,.txt,.tsv"></div>
     ${fld('Atau tempel langsung dari Excel / Google Sheets / CSV', '<textarea class="in mono" name="csv" style="min-height:90px" placeholder="Salin sel dari Excel lalu tempel di sini. Baris judul kolom boleh ada, boleh tidak."></textarea>')}
     <div id="iprev" class="mt"></div><div id="ires" class="mono sm mt"></div>`,
@@ -97,6 +97,7 @@ function modalImpor(o) {
   const pilih = async f => { try { $('#ires', m.el).textContent = 'Membaca ' + f.name + '…'; ta.value = ''; proses(await bacaBerkasTabel(f)); $('#ires', m.el).textContent = f.name; } catch (e) { $('#ires', m.el).textContent = ''; toast(e.message, 'err'); } };
   pasangDrop(m.el, pilih);
   ta.oninput = debounce(() => proses(bacaTabelTeks(ta.value)), 300);
+  $('#itx', m.el).onclick = () => { try { unduhXlsx(o.tplXlsx.nama, o.tplXlsx.lembar); } catch (e) { toast('Templat Excel gagal dibuat: ' + e.message, 'err'); } };
   $('#itc', m.el).onclick = () => unduhCsv(o.tplCsv.nama, o.tplCsv.kolom, o.tplCsv.baris);
   return m;
 }
@@ -119,7 +120,7 @@ Pages.pengguna = async v => {
   $('#uimp', v).onclick = () => modalImpor({
     judul: 'Impor pengguna dari Excel / CSV',
     petunjuk: 'Kolom yang dikenali: <b>nama, role, kelas, email, nisn, nowa, namaortu, nowaortu</b>. Baris judul boleh dihilangkan; sistem menebak kolom dari isinya (mis. <span class="mono">Siswa VII-B</span> dibaca sebagai peran siswa, kelas VII-B). Role: admin, pimpinan, wali, pengurus, siswa. Siswa boleh tanpa email.',
-    tplXlsx: 'templat/templat_pengguna.xlsx', tplCsv: { nama: 'templat_pengguna.csv', kolom: ['nama', 'role', 'kelas', 'email', 'nisn', 'nowa', 'namaortu', 'nowaortu'], baris: [['I Putu Arya Pratama', 'siswa', 'VIII-A', '', '0091823901', '081234567890', 'Bpk. Pratama', '081234500000']] },
+    tplXlsx: { nama: 'templat_pengguna.xlsx', lembar: [{ nama: 'Pengguna', kolom: ['nama', 'role', 'kelas', 'email', 'nisn', 'nowa', 'namaortu', 'nowaortu'], teks: [4, 5, 7], lebar: [26, 12, 16, 28, 14, 16, 18, 16], baris: [['I Putu Arya Pratama', 'siswa', 'VIII-A', '', '0091823901', '081234567890', 'Bpk. Pratama', '081234500000'], ['Ni Kadek Devi Anggraini', 'pengurus', 'VIII-A', 'kadek@sekolah.sch.id', '0091823925', '081234500002', 'Ibu Devi', '081234500003'], ['I Made Budi, S.Pd', 'wali', 'VIII-A,VIII-B', 'budi@sekolah.sch.id', '', '081234500004', '', '']] }, { nama: 'Petunjuk', kolom: [], lebar: [110], baris: [['PETUNJUK PENGISIAN (lembar ini boleh dihapus)'], [''], ['1. Isi data mulai baris 2 pada lembar "Pengguna". Baris judul boleh dihapus; sistem menebak kolom dari isinya.'], ['2. role: admin, pimpinan, wali, pengurus, atau siswa. Boleh juga ditulis "Siswa VII-B" (peran dan kelas dalam satu sel).'], ['3. kelas: contoh VIII-A. Wali yang mengampu banyak kelas: VIII-A,VIII-B.'], ['4. email: wajib untuk admin, pimpinan, wali, pengurus (akun Google). Siswa boleh kosong.'], ['5. nisn dan nomor WhatsApp: kolom sudah berformat Teks agar angka 0 di depan tidak hilang.'], ['6. nowa/nowaortu: 08xxxxxxxxxx atau 628xxxxxxxxxx.'], ['7. Data yang sudah terdaftar (email atau NISN sama) otomatis dilewati. Maksimal 5.000 baris per berkas.']] }] }, tplCsv: { nama: 'templat_pengguna.csv', kolom: ['nama', 'role', 'kelas', 'email', 'nisn', 'nowa', 'namaortu', 'nowaortu'], baris: [['I Putu Arya Pratama', 'siswa', 'VIII-A', '', '0091823901', '081234567890', 'Bpk. Pratama', '081234500000']] },
     pemeta: rowsPengguna, kolom: [['nama', 'Nama'], ['role', 'Peran'], ['kelas', 'Kelas'], ['nisn', 'NISN'], ['noWA', 'WhatsApp'], ['email', 'Email']],
     kirim: async rows => (await Api.call('pengguna.impor', { rows })).data, selesai: ulang
   });
@@ -234,7 +235,7 @@ Pages.crm = async v => {
   $('#cimp', v).onclick = () => modalImpor({
     judul: 'Impor kontak luar dari Excel / CSV',
     petunjuk: 'Untuk calon peserta, tamu undangan, atau mitra yang belum ada di data pengguna. Kolom: <b>nama, email, wa, segmen, tag</b>. Judul kolom boleh dihilangkan.',
-    tplXlsx: 'templat/templat_kontak.xlsx', tplCsv: { nama: 'templat_kontak.csv', kolom: ['nama', 'email', 'wa', 'segmen', 'tag'], baris: [['Bu Ayu', 'ayu@contoh.id', '081234567890', 'Mitra', 'undangan']] },
+    tplXlsx: { nama: 'templat_kontak.xlsx', lembar: [{ nama: 'Kontak', kolom: ['nama', 'email', 'wa', 'segmen', 'tag'], teks: [2], lebar: [26, 28, 16, 16, 16], baris: [['Bu Ayu', 'ayu@contoh.id', '081234567890', 'Mitra', 'undangan'], ['Pak Wayan', '', '081234500010', 'Komite', '']] }, { nama: 'Petunjuk', kolom: [], lebar: [100], baris: [['Isi mulai baris 2. Wajib: nama, dan minimal salah satu dari email atau wa. segmen dan tag opsional.']] }] }, tplCsv: { nama: 'templat_kontak.csv', kolom: ['nama', 'email', 'wa', 'segmen', 'tag'], baris: [['Bu Ayu', 'ayu@contoh.id', '081234567890', 'Mitra', 'undangan']] },
     pemeta: rowsKontak, kolom: [['nama', 'Nama'], ['email', 'Email'], ['wa', 'WhatsApp'], ['segmen', 'Segmen'], ['tag', 'Tag']],
     kirim: async rows => (await Api.call('crm.import', { rows })).data, selesai: () => { muatC(); kpi(); }
   });

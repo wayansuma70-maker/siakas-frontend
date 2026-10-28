@@ -122,20 +122,161 @@ function unduhCsv(nama, kolom, baris) {
   const csv = '\ufeff' + [kolom, ...baris].map(r => r.map(q).join(',')).join('\r\n');
   const a = document.createElement('a'); a.href = URL.createObjectURL(new Blob([csv], { type: 'text/csv;charset=utf-8' })); a.download = nama; document.body.appendChild(a); a.click(); setTimeout(() => { URL.revokeObjectURL(a.href); a.remove(); }, 500);
 }
-function bacaCsv(teks) {
-  const baris = []; let r = [], f = '', q = false; teks = teks.replace(/^\ufeff/, '');
-  const sep = (teks.split('\n')[0].match(/;/g) || []).length > (teks.split('\n')[0].match(/,/g) || []).length ? ';' : ',';
+// ---------- tabel: CSV / TSV / Excel (.xlsx) ----------
+
+function bacaTabelTeks(teks) {
+  teks = String(teks || '').replace(/^\ufeff/, '');
+  const first = teks.split(/\r?\n/)[0] || '', cnt = ch => first.split(ch).length - 1;
+  const sep = ['\t', ';', ','].reduce((b, c) => cnt(c) > cnt(b) ? c : b, ',');
+  const baris = []; let r = [], f = '', q = false;
+  const tutup = () => { r.push(f); f = ''; if (r.some(x => String(x).trim())) baris.push(r); r = []; };
   for (let i = 0; i < teks.length; i++) {
     const c = teks[i];
     if (q) { if (c === '"' && teks[i + 1] === '"') { f += '"'; i++; } else if (c === '"') q = false; else f += c; }
-    else if (c === '"') q = true; else if (c === sep) { r.push(f); f = ''; }
-    else if (c === '\n' || c === '\r') { if (c === '\r' && teks[i + 1] === '\n') i++; r.push(f); f = ''; if (r.some(x => x.trim())) baris.push(r); r = []; }
+    else if (c === '"' && !f) q = true;
+    else if (c === sep) { r.push(f); f = ''; }
+    else if (c === '\n' || c === '\r') { if (c === '\r' && teks[i + 1] === '\n') i++; tutup(); }
     else f += c;
   }
-  r.push(f); if (r.some(x => x.trim())) baris.push(r);
-  if (!baris.length) return [];
-  const h = baris[0].map(x => x.trim().toLowerCase());
-  return baris.slice(1).map(b => { const o = {}; h.forEach((k, i) => o[k] = (b[i] || '').trim()); return o; });
+  if (f || r.length) tutup();
+  return baris.slice(0, 5000);
+}
+/** Pembaca .xlsx tanpa pustaka: unzip (DecompressionStream) + XML. Membaca lembar pertama, hanya teks/angka. */
+async function bacaXlsx(buf) {
+  if (typeof DecompressionStream === 'undefined') throw new Error('Browser Anda terlalu lama untuk membaca Excel. Perbarui browser, atau simpan berkas sebagai CSV.');
+  const u8 = new Uint8Array(buf), dv = new DataView(buf), TD = new TextDecoder('utf-8');
+  let e = u8.length - 22; while (e >= 0 && dv.getUint32(e, true) !== 0x06054b50) e--;
+  if (e < 0) throw new Error('Berkas bukan Excel (.xlsx) yang valid. Jika berkas .xls lama, simpan ulang sebagai .xlsx atau CSV.');
+  const n = dv.getUint16(e + 10, true); let p = dv.getUint32(e + 16, true); const files = {};
+  for (let i = 0; i < n; i++) {
+    if (dv.getUint32(p, true) !== 0x02014b50) break;
+    const nl = dv.getUint16(p + 28, true), el = dv.getUint16(p + 30, true), cl = dv.getUint16(p + 32, true);
+    files[TD.decode(u8.subarray(p + 46, p + 46 + nl))] = { comp: dv.getUint16(p + 10, true), csz: dv.getUint32(p + 20, true), usz: dv.getUint32(p + 24, true), off: dv.getUint32(p + 42, true) };
+    p += 46 + nl + el + cl;
+  }
+  const ambil = async nama => {
+    const f = files[nama]; if (!f) return null;
+    if (f.usz > 25 * 1048576) throw new Error('Isi berkas Excel terlalu besar.');
+    const start = f.off + 30 + dv.getUint16(f.off + 26, true) + dv.getUint16(f.off + 28, true), data = u8.subarray(start, start + f.csz);
+    if (f.comp === 0) return TD.decode(data);
+    if (f.comp !== 8) throw new Error('Kompresi berkas Excel tidak didukung.');
+    const ds = new DecompressionStream('deflate-raw'), w = ds.writable.getWriter(); w.write(data); w.close();
+    return TD.decode(await new Response(ds.readable).arrayBuffer());
+  };
+  const xml = async nama => { const t = await ambil(nama); return t ? new DOMParser().parseFromString(t, 'application/xml') : null; };
+  const wb = await xml('xl/workbook.xml'); if (!wb) throw new Error('Struktur berkas Excel tidak dikenali.');
+  const sh = wb.getElementsByTagName('sheet')[0], rid = sh && (sh.getAttribute('r:id') || sh.getAttributeNS('http://schemas.openxmlformats.org/officeDocument/2006/relationships', 'id'));
+  let target = 'xl/worksheets/sheet1.xml'; const rels = await xml('xl/_rels/workbook.xml.rels');
+  if (rels && rid) [...rels.getElementsByTagName('Relationship')].forEach(r => { if (r.getAttribute('Id') === rid) { const t = r.getAttribute('Target'); target = t.startsWith('/') ? t.slice(1) : 'xl/' + t.replace(/^\.\//, ''); } });
+  const ss = []; const sst = await xml('xl/sharedStrings.xml');
+  if (sst) [...sst.getElementsByTagName('si')].forEach(si => { ss.push([...si.getElementsByTagName('t')].filter(t => t.parentNode.localName !== 'rPh').map(t => t.textContent).join('')); });
+  const sd = await xml(target); if (!sd) throw new Error('Lembar pertama pada berkas Excel tidak ditemukan.');
+  const out = [];
+  [...sd.getElementsByTagName('row')].slice(0, 5000).forEach(row => {
+    const arr = [];
+    [...row.getElementsByTagName('c')].forEach(c => {
+      const m = (c.getAttribute('r') || '').match(/^([A-Z]+)/); if (!m) return;
+      let col = 0; for (const ch of m[1]) col = col * 26 + ch.charCodeAt(0) - 64; col--; if (col > 60) return;
+      const t = c.getAttribute('t'), v = c.getElementsByTagName('v')[0];
+      let val = '';
+      if (t === 'inlineStr') val = [...c.getElementsByTagName('t')].map(x => x.textContent).join('');
+      else if (v) { val = v.textContent; if (t === 's') val = ss[Number(val)] || ''; else if (t === 'b') val = val === '1' ? 'TRUE' : 'FALSE'; else if (!t || t === 'n') { if (/^-?\d+(\.\d+)?[eE][+-]?\d+$/.test(val)) val = Number(val).toFixed(0); else val = val.replace(/\.0+$/, ''); } }
+      arr[col] = String(val).trim();
+    });
+    for (let i = 0; i < arr.length; i++) if (arr[i] === undefined) arr[i] = '';
+    if (arr.some(x => x)) out.push(arr);
+  });
+  return out;
+}
+async function bacaBerkasTabel(file) {
+  const n = file.name.toLowerCase();
+  if (/\.xls[xm]$/.test(n)) return bacaXlsx(await file.arrayBuffer());
+  if (/\.xls$/.test(n)) throw new Error('Format Excel lama (.xls) belum didukung. Di Excel: File → Simpan Sebagai → "Excel Workbook (.xlsx)" atau "CSV UTF-8", lalu pilih berkas hasilnya.');
+  return bacaTabelTeks(await file.text());
+}
+
+// ---------- pemeta kolom cerdas: dengan atau tanpa baris judul ----------
+const normH = s => String(s == null ? '' : s).toLowerCase().replace(/[^a-z0-9 ]/g, ' ').replace(/\s+/g, ' ').trim();
+const ALIAS_PENGGUNA = {
+  nama: ['nama', 'nama lengkap', 'nama siswa', 'nama peserta didik', 'name'], role: ['role', 'peran', 'jabatan', 'sebagai'], kelas: ['kelas', 'rombel', 'rombongan belajar', 'class'],
+  email: ['email', 'e mail', 'email google', 'alamat email'], nisn: ['nisn', 'nis', 'no induk'],
+  noWA: ['nowa', 'no wa', 'wa', 'whatsapp', 'no whatsapp', 'nomor wa', 'no hp', 'hp', 'telepon', 'no telepon', 'nomor hp'],
+  namaOrtu: ['namaortu', 'nama ortu', 'nama orang tua', 'orang tua', 'nama wali murid', 'ortu'],
+  noWAOrtu: ['nowaortu', 'no wa ortu', 'wa ortu', 'hp ortu', 'no hp ortu', 'whatsapp ortu', 'wa orang tua', 'no hp orang tua', 'no wa orang tua']
+};
+const ALIAS_KONTAK = { nama: ['nama', 'nama lengkap', 'name'], email: ['email', 'e mail'], wa: ['wa', 'no wa', 'nowa', 'whatsapp', 'no hp', 'hp', 'telepon', 'nomor wa'], segmen: ['segmen', 'kategori', 'kelompok'], tag: ['tag', 'label'] };
+const LBL = { nama: 'Nama', role: 'Peran', kelas: 'Kelas', email: 'Email', nisn: 'NISN', noWA: 'WhatsApp', namaOrtu: 'Nama ortu', noWAOrtu: 'WA ortu', wa: 'WhatsApp', segmen: 'Segmen', tag: 'Tag' };
+function cariJudul(raw, alias) {
+  for (let i = 0; i < Math.min(5, raw.length); i++) {
+    const peta = {}; let n = 0;
+    raw[i].forEach((c, j) => { const h = normH(c), hc = h.replace(/ /g, ''); for (const k in alias) if (peta[k] === undefined && alias[k].some(a => a === h || a.replace(/ /g, '') === hc)) { peta[k] = j; n++; break; } });
+    if (n >= 2) return { baris: i, peta };
+  }
+  return null;
+}
+const hpMirip = c => /^(\+?62|0?8)\d{7,12}$/.test(String(c).replace(/[\s.\-()]/g, ''));
+const RM = { 7: 'VII', 8: 'VIII', 9: 'IX' };
+function kelasDari(t) {
+  const hasil = [], re = /\b(VIII|VII|IX|[789])\s*[-._ ]?\s*([A-Z0-9])\b/g; let m; const u = String(t || '').toUpperCase();
+  while ((m = re.exec(u))) { const k = (RM[m[1]] || m[1]) + '-' + m[2]; if (!hasil.includes(k)) hasil.push(k); }
+  return hasil.join(',');
+}
+function perankan(t) {
+  t = normH(t); if (!t) return '';
+  if (/\b(kepala sekolah|kepsek|pimpinan|manajemen|waka)\b/.test(t)) return 'pimpinan';
+  if (/\b(admin|operator)\b/.test(t)) return 'admin';
+  if (/\b(wali kelas|wali|guru|pengajar)\b/.test(t)) return 'wali';
+  if (/\b(ketua|bendahara|sekretaris|pengurus)\b/.test(t)) return 'pengurus';
+  if (/\b(siswa|siswi|murid|peserta didik)\b/.test(t)) return 'siswa';
+  return '';
+}
+const KATA_PERAN = /\b(kepala sekolah|kepsek|pimpinan|manajemen|waka|admin|operator|wali kelas|wali|guru|pengajar|ketua|bendahara|sekretaris|pengurus|siswa|siswi|murid|peserta didik|kelas)\b/g;
+/** sisa teks setelah kata peran & penanda kelas dibuang: kosong = sel murni berisi peran/kelas (bukan nama). */
+const sisaTeks = c => normH(c).replace(/\b(viii|vii|ix|[789])\s*[a-z0-9]\b/g, ' ').replace(KATA_PERAN, ' ').replace(/\s+/g, ' ').trim();
+function inferPengguna(cells) {
+  const o = { nama: '', role: '', kelas: '', email: '', nisn: '', noWA: '', namaOrtu: '', noWAOrtu: '' }, teks = [];
+  cells.forEach(c => {
+    c = String(c == null ? '' : c).trim(); if (!c) return;
+    if (/@/.test(c)) o.email = c;
+    else if (hpMirip(c)) { if (o.noWA) o.noWAOrtu = c; else o.noWA = c; }
+    else if (/^\d{9,10}$/.test(c.replace(/[\s.\-]/g, ''))) o.nisn = c;
+    else { const rl = perankan(c), kl = kelasDari(c); if ((rl || kl) && sisaTeks(c) === '') { if (rl) o.role = rl; if (kl) o.kelas = kl; } else teks.push(c); }
+  });
+  o.nama = teks[0] || ''; o.namaOrtu = teks[1] || ''; return o;
+}
+/** raw (array of array) → { rows, header, kolom, peringatan } untuk pengguna */
+function rowsPengguna(raw) {
+  const h = cariJudul(raw, ALIAS_PENGGUNA), peringatan = [], rows = [];
+  const data = h ? raw.slice(h.baris + 1) : raw;
+  data.forEach((r, i) => {
+    let o;
+    if (h) { const g = k => h.peta[k] === undefined ? '' : String(r[h.peta[k]] == null ? '' : r[h.peta[k]]).trim(); o = { nama: g('nama'), role: g('role'), kelas: g('kelas'), email: g('email'), nisn: g('nisn'), noWA: g('noWA'), namaOrtu: g('namaOrtu'), noWAOrtu: g('noWAOrtu') }; }
+    else o = inferPengguna(r);
+    const mentah = o.role;
+    o.role = perankan(mentah) || o.role.toLowerCase();
+    if (!['admin', 'pimpinan', 'wali', 'pengurus', 'siswa'].includes(o.role)) o.role = 'siswa';
+    o.kelas = kelasDari(o.kelas) || kelasDari(mentah) || String(o.kelas || '').toUpperCase().replace(/\s+/g, '');
+    o.email = o.email.toLowerCase(); o.nisn = o.nisn.replace(/\D/g, ''); if (o.nisn.length === 9) o.nisn = '0' + o.nisn;
+    if (!o.nama && !o.email) return;
+    const no = i + 1 + (h ? h.baris + 1 : 0);
+    if (!o.nama) peringatan.push('Baris ' + no + ': nama tidak terbaca');
+    else if (o.role !== 'admin' && o.role !== 'pimpinan' && !o.kelas) peringatan.push('Baris ' + no + ' (' + o.nama + '): kelas tidak terdeteksi');
+    else if (o.role !== 'siswa' && !o.email) peringatan.push('Baris ' + no + ' (' + o.nama + '): email Google wajib untuk peran ' + o.role);
+    rows.push(o);
+  });
+  return { rows, header: !!h, kolom: h ? Object.keys(h.peta).map(k => LBL[k]) : ['Nama', 'Peran', 'Kelas', 'NISN', 'WhatsApp (dideteksi dari isi)'], peringatan };
+}
+function rowsKontak(raw) {
+  const h = cariJudul(raw, ALIAS_KONTAK), peringatan = [], rows = [], data = h ? raw.slice(h.baris + 1) : raw;
+  data.forEach((r, i) => {
+    let o;
+    if (h) { const g = k => h.peta[k] === undefined ? '' : String(r[h.peta[k]] == null ? '' : r[h.peta[k]]).trim(); o = { nama: g('nama'), email: g('email'), wa: g('wa'), segmen: g('segmen'), tag: g('tag') }; }
+    else { o = { nama: '', email: '', wa: '', segmen: '', tag: '' }; const t = []; r.forEach(c => { c = String(c == null ? '' : c).trim(); if (!c) return; if (/@/.test(c)) o.email = c; else if (hpMirip(c)) o.wa = c; else t.push(c); }); o.nama = t[0] || ''; o.segmen = t[1] || ''; }
+    if (!o.nama && !o.email && !o.wa) return;
+    if (!o.nama) peringatan.push('Baris ' + (i + 1) + ': nama tidak terbaca'); else if (!o.email && !o.wa) peringatan.push('Baris ' + (i + 1) + ' (' + o.nama + '): perlu email atau WhatsApp');
+    rows.push(o);
+  });
+  return { rows, header: !!h, kolom: h ? Object.keys(h.peta).map(k => LBL[k]) : ['Nama', 'Email/WA (dideteksi dari isi)', 'Segmen'], peringatan };
 }
 
 // ---------- grafik SVG ----------

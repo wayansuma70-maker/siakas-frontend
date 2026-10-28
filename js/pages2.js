@@ -70,6 +70,37 @@ Pages.laporan = async v => {
   go2();
 };
 
+
+// ============================================================ JENDELA IMPOR (Excel .xlsx / CSV / tempel)
+/** o: { judul, petunjuk, tplXlsx, tplCsv:{nama,kolom,baris}, pemeta(raw), kolom:[[key,label]], kirim(rows)→data, selesai() } */
+function modalImpor(o) {
+  let hasil = { rows: [], peringatan: [], kolom: [], header: true }, sibuk = false;
+  const m = modal({ title: o.judul, wide: true, body: `<p class="sm" style="margin-top:0">${o.petunjuk}</p>
+    <div class="row mb"><a class="btn o sm" href="${o.tplXlsx}" download>${ic('download', 12)} Templat Excel (.xlsx)</a><button class="btn o sm" id="itc">${ic('download', 12)} Templat CSV</button></div>
+    <div class="drop" id="idrop" style="padding:18px"><div class="mono sm b">${ic('upload', 18)} [PILIH ATAU TARIK BERKAS EXCEL / CSV KE SINI]</div><div class="sm sub">.xlsx · .csv · .txt — lembar pertama dibaca</div><input type="file" id="ifile" class="hide" accept=".xlsx,.xlsm,.xls,.csv,.txt,.tsv"></div>
+    ${fld('Atau tempel langsung dari Excel / Google Sheets / CSV', '<textarea class="in mono" name="csv" style="min-height:90px" placeholder="Salin sel dari Excel lalu tempel di sini. Baris judul kolom boleh ada, boleh tidak."></textarea>')}
+    <div id="iprev" class="mt"></div><div id="ires" class="mono sm mt"></div>`,
+    actions: [{ label: 'Tutup' }, { label: 'Impor', cls: 'p', fn: async mm => {
+      if (sibuk) return false; if (!hasil.rows.length) throw new Error('Belum ada data yang terbaca. Pilih berkas atau tempel data terlebih dahulu.');
+      sibuk = true; let tambah = 0, lewat = [], jml = 0;
+      try { for (let i = 0; i < hasil.rows.length; i += 200) { $('#ires', mm.el).textContent = `Mengimpor ${Math.min(i + 200, hasil.rows.length)} / ${hasil.rows.length}…`; const d = await o.kirim(hasil.rows.slice(i, i + 200)); tambah += d.ditambah; jml += d.jumlahDilewati; lewat = lewat.concat(d.dilewati.map(x => x.replace(/^Baris (\d+)/, (a, n) => 'Baris ' + (Number(n) + i)))); } }
+      finally { sibuk = false; }
+      $('#ires', mm.el).innerHTML = `<div class="chk" style="cursor:default">${ic('shield', 16)}<span><b>✓ ${tambah} ditambahkan</b>, ${jml} dilewati (sudah terdaftar / data kurang).<br>${lewat.slice(0, 40).map(esc).join('<br>')}</span></div>`;
+      toast(tambah + ' data berhasil diimpor.'); o.selesai(); hasil = { rows: [], peringatan: [], kolom: [] }; $('#iprev', mm.el).innerHTML = ''; return false;
+    } }] });
+  const ta = $('[name=csv]', m.el), prev = $('#iprev', m.el);
+  const tampil = () => {
+    if (!hasil.rows.length) { prev.innerHTML = ''; return; }
+    prev.innerHTML = `<div class="row sb2 mb"><span class="lbl">PRATINJAU · ${hasil.rows.length} BARIS TERBACA</span><span class="sm sub">${hasil.header ? 'Judul kolom: ' : 'Tanpa judul kolom — dideteksi dari isi: '}${esc(hasil.kolom.join(', '))}</span></div><div class="tw" style="max-height:220px;overflow-y:auto;border:1px solid var(--line2)"><table><thead><tr><th>#</th>${o.kolom.map(c => `<th>${esc(c[1])}</th>`).join('')}</tr></thead><tbody>${hasil.rows.slice(0, 8).map((r, i) => `<tr><td class="mono sm">${i + 1}</td>${o.kolom.map(c => `<td class="sm">${esc(r[c[0]] || '')}</td>`).join('')}</tr>`).join('')}</tbody></table></div>${hasil.rows.length > 8 ? `<div class="mono xs sub">… dan ${hasil.rows.length - 8} baris lainnya</div>` : ''}${hasil.peringatan.length ? `<div class="chk mt" style="cursor:default;border-color:var(--red)">${ic('alert')}<span class="sm"><b>${hasil.peringatan.length} peringatan</b> (baris ini kemungkinan dilewati):<br>${hasil.peringatan.slice(0, 8).map(esc).join('<br>')}${hasil.peringatan.length > 8 ? '<br>…' : ''}</span></div>` : ''}`;
+  };
+  const proses = raw => { if (!raw.length) { hasil = { rows: [], peringatan: [], kolom: [] }; prev.innerHTML = `<div class="chk" style="cursor:default">${ic('alert')}<span class="sm">Tidak ada baris yang terbaca. Pastikan berkas berisi data pada lembar pertama.</span></div>`; return; } hasil = o.pemeta(raw); if (!hasil.rows.length) { prev.innerHTML = `<div class="chk" style="cursor:default">${ic('alert')}<span class="sm">Data terbaca, tetapi tidak ada baris yang berisi nama. Periksa kolom pertama.</span></div>`; return; } tampil(); };
+  const pilih = async f => { try { $('#ires', m.el).textContent = 'Membaca ' + f.name + '…'; ta.value = ''; proses(await bacaBerkasTabel(f)); $('#ires', m.el).textContent = f.name; } catch (e) { $('#ires', m.el).textContent = ''; toast(e.message, 'err'); } };
+  pasangDrop(m.el, pilih);
+  ta.oninput = debounce(() => proses(bacaTabelTeks(ta.value)), 300);
+  $('#itc', m.el).onclick = () => unduhCsv(o.tplCsv.nama, o.tplCsv.kolom, o.tplCsv.baris);
+  return m;
+}
+
 // ============================================================ PENGGUNA
 const ROLE_OPT = [['admin', 'Admin Sistem'], ['pimpinan', 'Kepala Sekolah / Manajemen'], ['wali', 'Guru / Wali Kelas'], ['pengurus', 'Pengurus Kelas'], ['siswa', 'Siswa']];
 Pages.pengguna = async v => {
@@ -85,8 +116,13 @@ Pages.pengguna = async v => {
   const form = u => modal({ title: u ? 'Ubah pengguna · ' + u.UserID : 'Tambah pengguna', body: `${fld('Nama lengkap *', `<input class="in" name="nama" maxlength="80" value="${esc(u ? u.Nama : '')}">`)}<div class="f2">${fld('Peran *', `<select class="in" name="role">${opsi(ROLE_OPT, u ? u.Role : 'siswa')}</select>`)}${fld('Kelas', `<input class="in" name="kelas" placeholder="VIII-A (wali boleh: VIII-A,VIII-B)" value="${esc(u ? u.Kelas : '')}">`)}</div>${fld('Email Google sekolah', `<input class="in" type="email" name="email" value="${esc(u ? u.Email : '')}">`, 'Wajib untuk selain siswa. Dipakai untuk masuk dengan Google.')}<div class="f2">${fld('NISN', `<input class="in" name="nisn" inputmode="numeric" value="${esc(u ? u.NISN : '')}">`)}${fld('WhatsApp', `<input class="in" name="wa" inputmode="tel" value="${esc(u ? u.NoWA : '')}">`)}</div><div class="f2">${fld('Nama orang tua/wali', `<input class="in" name="ortu" value="${esc(u ? u.NamaOrtu : '')}">`)}${fld('WhatsApp orang tua', `<input class="in" name="waortu" inputmode="tel" value="${esc(u ? u.NoWAOrtu : '')}">`)}</div>${fld('Status', `<select class="in" name="st">${opsi(['Aktif', 'Nonaktif'], u ? u.Status : 'Aktif')}</select>`)}`, actions: [{ label: 'Batal' }, { label: 'Simpan', cls: 'p', fn: async m => { const r = await Api.call('pengguna.simpan', { userId: u && u.UserID, nama: val(m.el, 'nama'), role: val(m.el, 'role'), kelas: val(m.el, 'kelas'), email: val(m.el, 'email'), nisn: val(m.el, 'nisn'), noWA: val(m.el, 'wa'), namaOrtu: val(m.el, 'ortu'), noWAOrtu: val(m.el, 'waortu'), status: val(m.el, 'st') }); toast(r.message); ulang(); } }] });
   $('#uq', v).oninput = debounce(e => { U.q = e.target.value; draw(); }, 250); $('#ur', v).onchange = e => { U.role = e.target.value; draw(); }; $('#us', v).onchange = e => { U.st = e.target.value; draw(); };
   $('#uadd', v).onclick = () => form(null);
-  $('#uimp', v).onclick = () => modal({ title: 'Impor pengguna dari CSV', wide: true, body: `<p class="sm">Kolom: <code class="mono">nama, role, kelas, email, nisn, nowa, namaortu, nowaortu</code>. Role: admin, pimpinan, wali, pengurus, siswa. Maks. 600 baris. Pemisah koma atau titik koma.</p><div class="row mb"><button class="btn o sm" id="utpl">${ic('download', 12)} Unduh templat</button><input type="file" accept=".csv,text/csv" id="ufile"></div>${fld('Atau tempel isi CSV', '<textarea class="in mono" name="csv" style="min-height:160px" placeholder="nama,role,kelas,email,nisn,nowa\nI Putu Arya,siswa,VIII-A,,0091823901,081234567890"></textarea>')}<div id="ures" class="mono sm"></div>`, actions: [{ label: 'Tutup' }, { label: 'Impor', cls: 'p', fn: async m => { const rows = bacaCsv(val(m.el, 'csv')).map(r => ({ nama: r.nama, role: (r.role || 'siswa').toLowerCase(), kelas: r.kelas, email: r.email, nisn: r.nisn, noWA: r.nowa, namaOrtu: r.namaortu, noWAOrtu: r.nowaortu })); if (!rows.length) throw new Error('CSV kosong atau kolom tidak dikenali.'); const r = await Api.call('pengguna.impor', { rows }); $('#ures', m.el).innerHTML = `✓ ${r.data.ditambah} ditambahkan, ${r.data.jumlahDilewati} dilewati.<br>${r.data.dilewati.map(esc).join('<br>')}`; toast(r.message); ulang(); return false; } }] });
-  document.addEventListener('click', function f(e) { if (e.target.closest && e.target.closest('#utpl')) unduhCsv('templat_pengguna.csv', ['nama', 'role', 'kelas', 'email', 'nisn', 'nowa', 'namaortu', 'nowaortu'], [['I Putu Arya Pratama', 'siswa', 'VIII-A', '', '0091823901', '081234567890', 'Bpk. Pratama', '081234500000']]); if (!document.body.contains(v) || S.nav !== n) document.removeEventListener('click', f); });
+  $('#uimp', v).onclick = () => modalImpor({
+    judul: 'Impor pengguna dari Excel / CSV',
+    petunjuk: 'Kolom yang dikenali: <b>nama, role, kelas, email, nisn, nowa, namaortu, nowaortu</b>. Baris judul boleh dihilangkan; sistem menebak kolom dari isinya (mis. <span class="mono">Siswa VII-B</span> dibaca sebagai peran siswa, kelas VII-B). Role: admin, pimpinan, wali, pengurus, siswa. Siswa boleh tanpa email.',
+    tplXlsx: 'templat/templat_pengguna.xlsx', tplCsv: { nama: 'templat_pengguna.csv', kolom: ['nama', 'role', 'kelas', 'email', 'nisn', 'nowa', 'namaortu', 'nowaortu'], baris: [['I Putu Arya Pratama', 'siswa', 'VIII-A', '', '0091823901', '081234567890', 'Bpk. Pratama', '081234500000']] },
+    pemeta: rowsPengguna, kolom: [['nama', 'Nama'], ['role', 'Peran'], ['kelas', 'Kelas'], ['nisn', 'NISN'], ['noWA', 'WhatsApp'], ['email', 'Email']],
+    kirim: async rows => (await Api.call('pengguna.impor', { rows })).data, selesai: ulang
+  });
   ulang();
 };
 
@@ -195,9 +231,13 @@ Pages.crm = async v => {
   $('#cq', v).oninput = debounce(e => { C.q = e.target.value; C.hal = 1; muatC(); }); $('#cw', v).onchange = e => { C.statusWA = e.target.value; C.hal = 1; muatC(); };
   $('#call', v).onchange = e => { C.rows.forEach(k => e.target.checked ? C.sel.add(k.KontakID) : C.sel.delete(k.KontakID)); muatC(); };
   $('#csync', v).onclick = e => aman(e.currentTarget, async () => { const r = await Api.call('crm.sync', {}); toast(r.message); muatC(); kpi(); });
-  $('#cimp', v).onclick = () => modal({ title: 'Impor kontak luar dari CSV', wide: true, body: `<p class="sm">Untuk calon peserta, tamu undangan, atau mitra yang belum ada di data pengguna. Kolom: <code class="mono">nama, email, wa, segmen, tag</code>.</p><div class="row mb"><button class="btn o sm" id="ctpl">${ic('download', 12)} Unduh templat</button><input type="file" accept=".csv" id="cfile"></div>${fld('Isi CSV', '<textarea class="in mono" name="csv" style="min-height:150px"></textarea>')}<div class="mono sm" id="cres"></div>`, actions: [{ label: 'Tutup' }, { label: 'Impor', cls: 'p', fn: async m => { const r = await Api.call('crm.import', { rows: bacaCsv(val(m.el, 'csv')) }); $('#cres', m.el).innerHTML = `✓ ${r.data.ditambah} diimpor, ${r.data.jumlahDilewati} dilewati.<br>${r.data.dilewati.map(esc).join('<br>')}`; muatC(); kpi(); return false; } }] });
-  document.addEventListener('change', function f(e) { if (e.target.id === 'cfile' || e.target.id === 'ufile') { const t = e.target.closest('.modal').querySelector('[name=csv]'); const fr = new FileReader(); fr.onload = () => { t.value = fr.result; }; fr.readAsText(e.target.files[0]); } if (S.nav !== n) document.removeEventListener('change', f); });
-  document.addEventListener('click', function f(e) { if (e.target.closest && e.target.closest('#ctpl')) unduhCsv('templat_kontak.csv', ['nama', 'email', 'wa', 'segmen', 'tag'], [['Bu Ayu', 'ayu@contoh.id', '081234567890', 'Mitra', 'undangan']]); if (S.nav !== n) document.removeEventListener('click', f); });
+  $('#cimp', v).onclick = () => modalImpor({
+    judul: 'Impor kontak luar dari Excel / CSV',
+    petunjuk: 'Untuk calon peserta, tamu undangan, atau mitra yang belum ada di data pengguna. Kolom: <b>nama, email, wa, segmen, tag</b>. Judul kolom boleh dihilangkan.',
+    tplXlsx: 'templat/templat_kontak.xlsx', tplCsv: { nama: 'templat_kontak.csv', kolom: ['nama', 'email', 'wa', 'segmen', 'tag'], baris: [['Bu Ayu', 'ayu@contoh.id', '081234567890', 'Mitra', 'undangan']] },
+    pemeta: rowsKontak, kolom: [['nama', 'Nama'], ['email', 'Email'], ['wa', 'WhatsApp'], ['segmen', 'Segmen'], ['tag', 'Tag']],
+    kirim: async rows => (await Api.call('crm.import', { rows })).data, selesai: () => { muatC(); kpi(); }
+  });
   kpi(); muatC();
 };
 

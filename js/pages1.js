@@ -8,6 +8,11 @@ const kelasSel = (id, v) => S.kelas.length > 1 ? `<select class="sel" id="${id}"
 const tanpaKelas = () => `<div class="card">${kosong('users', S.me.role === 'admin' ? 'Belum ada kelas. Tambahkan siswa dan wali kelas di menu Users terlebih dahulu.' : 'Akun Anda belum terhubung ke kelas mana pun. Hubungi admin sekolah.')}</div>`;
 const stat = (lbl, v, sub, ikon, ft) => `<div class="card k kpi"><div class="row sb2" style="align-items:flex-start"><span class="lbl">${lbl}</span><span class="ib">${ic(ikon, 16)}</span></div><div class="v">${v}</div>${sub ? `<div class="sm sub">${sub}</div>` : ''}<div class="ft">${ft || ''}</div></div>`;
 const vivo = n => n === S.nav;
+/** Dialog hapus seragam: ringkasan data, peringatan, alasan wajib. o: { judul, ringkas(HTML), catatan?, aksi(alasan)→respons, selesai() } */
+function modalHapus(o) {
+  return modal({ title: o.judul, body: `<div class="chk" style="cursor:default;border-color:var(--red);background:#fff">${ic('alert', 16)}<span class="sm"><b>Anda akan menghapus:</b><br>${o.ringkas}<br><span class="sub">${o.catatan || 'Data tidak akan dipakai lagi dalam daftar dan perhitungan. Siapa, kapan, dan alasannya tercatat di Log Audit.'}</span></span></div><div class="mt">${fld('Alasan penghapusan (wajib)', '<textarea class="in" name="alasan" maxlength="200" placeholder="Contoh: salah input nominal / nama salah ketik"></textarea>')}</div>`,
+    actions: [{ label: 'Batal' }, { label: ic('x', 12) + ' Hapus', cls: 'danger', fn: async m => { const a = val(m.el, 'alasan').trim(); if (a.length < 5) { toast('Alasan minimal 5 karakter.', 'err'); return false; } const r = await o.aksi(a); toast((r && r.message) || 'Data dihapus.'); if (o.selesai) o.selesai(); } }] });
+}
 
 // ============================================================ OVERVIEW
 Pages.overview = async v => {
@@ -48,7 +53,7 @@ Pages.presensi = async v => {
     <div class="card mt"><div class="cb row sb2"><div class="row"><div class="row" style="position:relative"><input class="in" id="pq" placeholder="Cari nama / NISN…" style="width:240px" aria-label="Cari siswa"></div><div class="chips" id="pchips"></div></div><div class="row"><span class="lbl">STATUS VERIFIKASI:</span><span id="pverif"></span>${edit ? `<button class="btn o sm" id="pall">${ic('usercheck', 14)} Tandai semua hadir</button>` : ''}</div></div></div>
     <div class="card mt"><div class="ch"><span class="lbl" id="ptitle">[TABLE: STUDENT ROSTER REGISTER]</span><span class="lbl mono" id="pcount"></span></div><div class="tw"><table><thead><tr><th>No</th><th>NISN</th><th>Nama siswa</th><th>Status kehadiran</th><th>Jam</th><th>Keterangan</th></tr></thead><tbody id="pbody"></tbody></table></div></div>
     <div class="rules mt"><div class="rh"><span>${ic('shield', 16)} Siakas Integrity Protocol · Zero Compromise Directive</span><span class="bd">[ENFORCED VIA AUDIT LOG]</span></div><div class="rb"><div class="rule"><h4>[Aturan I: larangan titip absen]</h4><p>Memanipulasi kehadiran atau memalsukan surat izin melanggar integritas sekolah dan tercatat permanen di Log Audit.</p></div><div class="rule"><h4>[Aturan II: validasi tingkat dua]</h4><p>Pengurus kelas hanya pencatat tahap pertama. Verifikasi final oleh wali kelas mengunci data.</p></div><div class="rule"><h4>[Aturan III: sanksi ketidakjujuran]</h4><p>Izin tanpa bukti sah dapat diubah menjadi Alpa oleh wali kelas. Perubahan setelah verifikasi wajib beralasan.</p></div></div></div>
-    <div class="bar"><div class="row"><span class="bd k" id="pmode">[STATUS: DRAFT MODE]</span><span class="sm sub mono" id="pinfo"></span></div><div class="row">${edit ? `<button class="btn o" id="psave">${ic('download', 14)} Simpan draf</button>` : ''}<button class="btn o" onclick="window.print()">${ic('print', 14)} Cetak</button>${(role === 'wali' || role === 'admin') ? `<button class="btn" id="pver">${ic('lock', 14)} Verifikasi &amp; kunci presensi</button>` : ''}</div></div>` + topo('presensi');
+    <div class="bar"><div class="row"><span class="bd k" id="pmode">[STATUS: DRAFT MODE]</span><span class="sm sub mono" id="pinfo"></span></div><div class="row">${edit ? `<button class="btn o" id="psave">${ic('download', 14)} Simpan draf</button>` : ''}${edit ? `<button class="btn danger" id="phapus">${ic('x', 14)} Hapus presensi</button>` : ''}<button class="btn o" onclick="window.print()">${ic('print', 14)} Cetak</button>${(role === 'wali' || role === 'admin') ? `<button class="btn" id="pver">${ic('lock', 14)} Verifikasi &amp; kunci presensi</button>` : ''}</div></div>` + topo('presensi');
   const draw = () => {
     const c = { Hadir: 0, Terlambat: 0, Izin: 0, Sakit: 0, Alpa: 0 }; P.siswa.forEach(s => c[s.status || 'Hadir']++);
     const tot = P.siswa.length || 1, pc = x => (x / tot * 100).toFixed(1).replace('.', ',') + '%';
@@ -65,6 +70,7 @@ Pages.presensi = async v => {
     $('#pmode').textContent = P.terv ? '[STATUS: LOCKED]' : '[STATUS: DRAFT MODE]'; $('#pmode').className = 'bd ' + (P.terv ? '' : 'k');
     $('#pinfo').textContent = P.ada ? `DICATAT: ${P.cby || '-'} · ${tgl(P.tgl)}` : 'Belum ada rekaman untuk tanggal ini — default semua HADIR.';
     const pv = $('#pver'); if (pv) pv.disabled = !P.ada || P.terv || P.dirty;
+    const phd = $('#phapus'); if (phd) phd.disabled = !P.ada || (P.terv && role === 'pengurus');
   };
   const muatRoster = async () => {
     $('#pbody').innerHTML = `<tr><td colspan="6">${muat()}</td></tr>`;
@@ -90,6 +96,7 @@ Pages.presensi = async v => {
     if (!await tanya(`Verifikasi dan kunci presensi kelas ${P.kelas} tanggal ${tgl(P.tgl)}? Pengurus kelas tidak dapat mengubahnya lagi.`, 'Verifikasi & kunci')) return;
     aman(e.currentTarget, async () => { const r = await Api.call('presensi.verifikasi', { kelas: P.kelas, tanggal: P.tgl }); toast(r.message); await muatRoster(); });
   };
+  const phd = $('#phapus', v); if (phd) phd.onclick = () => modalHapus({ judul: 'Hapus presensi', ringkas: `Presensi kelas <b>${esc(P.kelas)}</b> tanggal <b>${tgl(P.tgl)}</b> (${P.siswa.length} siswa)${P.terv ? ' — <b>sudah diverifikasi</b>' : ''}`, catatan: 'Seluruh catatan presensi kelas ini pada tanggal tersebut dihapus dan tidak dihitung dalam rekap. Anda dapat menginput ulang setelahnya.', aksi: a => Api.call('presensi.hapus', { kelas: P.kelas, tanggal: P.tgl, alasan: a }), selesai: muatRoster });
   muatRoster();
 };
 async function presensiSiswa(v) {
@@ -124,6 +131,8 @@ Pages.kas = async v => {
       const aks = [];
       if (staf && r.Status === 'Menunggu' && !mine) aks.push(`<button class="btn sm" data-v="${r.KasID}">VERIF</button>`);
       if (staf && (r.Status === 'Menunggu' || r.Status === 'Terverifikasi') && r.Kategori !== 'Koreksi') aks.push(`<button class="btn o sm" data-r="${r.KasID}">BALIK</button>`);
+      const buka = r.Status === 'Menunggu' || r.Status === 'Ditolak';
+      if (r.Status !== 'Dibalik' && r.Kategori !== 'Koreksi' && (role === 'admin' || (role === 'wali' && buka) || (role === 'pengurus' && mine && buka))) aks.push(`<button class="btn danger sm" data-del="${r.KasID}">HAPUS</button>`);
       return `<tr class="${r.flag ? 'flag' : ''}"><td class="mono sm b">${esc(r.KasID)}</td><td class="mono sm">${tgl(r.Tanggal)}</td><td style="min-width:220px">${esc(r.Keterangan)}${r.flag && r.sisaJam != null ? `<div class="red mono xs">[DEADLINE: ${r.sisaJam > 0 ? 'H-' + Math.ceil(r.sisaJam) + ' JAM' : 'LEWAT BATAS'}]</div>` : ''}${r.Catatan ? `<div class="mono xs sub">Catatan: ${esc(r.Catatan)}</div>` : ''}</td><td class="sm">${esc(r.Kategori)}</td><td class="c">${bd(r.Jenis, r.Jenis === 'IN' ? 'k' : '')}</td><td class="num b mono">${r.Jenis === 'IN' ? '+' : '−'} ${rp(r.Nominal).replace('Rp ', 'Rp ')}</td><td>${bukti}</td><td class="sm">${esc(r.pencatat)}<div class="mono xs sub">Verif: ${esc(r.pemverifikasi || '–')}</div></td><td>${sbd(r.Status)}</td><td><div class="row gap8">${aks.join('')}</div></td></tr>`;
     }).join('');
     $('#kas', v).innerHTML = `<div class="grid g4"><div class="card"><div class="cb"><div class="lbl">Audit entity / cohort</div><div class="b" style="font-size:22px;margin:6px 0">KELAS: ${esc(d.kelas)}</div><div class="sm sub">Wali: ${esc(d.wali || '-')}<br>Bendahara: ${esc(d.bendahara || '-')}</div></div><div class="cf">${kelasSel('kk', K.kelas)}</div></div>
@@ -141,6 +150,7 @@ Pages.kas = async v => {
     $$('[data-up]', v).forEach(b => b.onclick = () => unggahSusulan(b.dataset.up, muatKas));
     $$('[data-v]', v).forEach(b => b.onclick = () => verifKas(b.dataset.v, K.rows.find(r => r.KasID === b.dataset.v), muatKas));
     $$('[data-r]', v).forEach(b => b.onclick = () => balikKas(b.dataset.r, muatKas));
+    $$('[data-del]', v).forEach(b => b.onclick = () => { const r = K.rows.find(x => x.KasID === b.dataset.del); modalHapus({ judul: 'Hapus transaksi ' + r.KasID, ringkas: `${esc(r.Keterangan)}<br><b>${r.Jenis === 'IN' ? '+' : '−'} ${rp(r.Nominal)}</b> · ${tgl(r.Tanggal)} · ${esc(r.Status)}`, catatan: 'Transaksi tidak dihitung lagi dalam saldo dan tidak tampil di daftar. Bila transaksi sebenarnya benar tetapi perlu dikoreksi, gunakan BALIK (entri pembalik).', aksi: a => Api.call('kas.hapus', { id: r.KasID, alasan: a }), selesai: muatKas }); });
   };
   $('#kexp', v).onclick = () => { if (!K.rows.length) return toast('Belum ada data untuk diekspor.', 'err'); unduhCsv(`kas_${K.kelas}_${hariIni()}.csv`, ['No/Ref', 'Tanggal', 'Keterangan', 'Kategori', 'Jenis', 'Nominal', 'Bukti', 'Pencatat', 'Verifikator', 'Status'], K.rows.map(r => [r.KasID, r.Tanggal, r.Keterangan, r.Kategori, r.Jenis, r.Nominal, r.adaBukti ? 'ADA' : 'TIDAK', r.pencatat, r.pemverifikasi, r.Status])); };
   muatKas();
@@ -230,6 +240,7 @@ Pages.barang = async v => {
     if (r.Status === 'Ditemukan' && r.Jenis === 'Temuan' && bisaLapor) act.push({ label: 'Ini barang saya', cls: 'p', fn: () => { klaim(r); return true; } });
     if (staf && r.Status === 'Diklaim') { act.push({ label: 'Tolak klaim', cls: 'danger', fn: async () => { await Api.call('barang.proses', { id: r.BarangID, keputusan: 'tolak' }); toast('Klaim ditolak.'); ulang(); } }, { label: 'Serahkan barang', cls: 'p', fn: async () => { await Api.call('barang.proses', { id: r.BarangID, keputusan: 'serah' }); toast('Barang diserahkan.'); ulang(); } }); }
     if (staf && r.Status === 'Ditemukan') act.splice(1, 0, { label: 'Arsipkan', fn: async () => { await Api.call('barang.proses', { id: r.BarangID, keputusan: 'arsip' }); ulang(); } });
+    if (staf || (r.milikPelapor && r.Status === 'Ditemukan')) act.splice(1, 0, { label: 'Hapus', cls: 'danger', fn: () => { modalHapus({ judul: 'Hapus laporan barang', ringkas: `<b>${esc(r.Nama)}</b> (${esc(r.Jenis)}) · ${esc(r.Lokasi)}`, aksi: a => Api.call('barang.hapus', { id: r.BarangID, alasan: a }), selesai: ulang }); } });
     const m = modal({ title: r.BarangID + ' · ' + r.Nama, wide: true, body: `<div class="grid g2"><div id="mf">${r.Thumb ? `<div class="ximg" style="aspect-ratio:4/3"><img alt="Foto" src="${esc(r.Thumb)}"></div>` : xbox(4, 3, '[IMG]')}${r.adaFoto ? '<button class="btn o sm mt" id="mfull">Lihat foto penuh</button>' : ''}</div><div class="sm"><div class="lbl">Status</div>${sbd(r.Status)}<div class="lbl mt">Jenis / kategori</div>${esc(r.Jenis)} · ${esc(r.Kategori)}<div class="lbl mt">Lokasi / tanggal</div>${esc(r.Lokasi)} · ${tgl(r.Tanggal)}<div class="lbl mt">Deskripsi</div>${esc(r.Deskripsi || '–')}<div class="lbl mt">Dilaporkan oleh</div>${esc(r.pelapor)}${r.pengklaim ? `<div class="lbl mt">Pengklaim</div>${esc(r.pengklaim)}${r.CiriKlaim ? `<div class="lbl mt">Ciri yang disebutkan pengklaim</div><div class="chk" style="cursor:default">${esc(r.CiriKlaim)}</div>` : ''}` : ''}<div class="timeline mt mono xs sub">Ditemukan → Diklaim → Dikembalikan · serah terima wajib diverifikasi petugas</div></div></div>`, actions: act });
     const f = $('#mfull', m.el); if (f) f.onclick = e => aman(e.currentTarget, async () => tampilBerkas(await Api.d('berkas.ambil', { jenis: 'barang', id: r.BarangID }), 'Foto ' + r.Nama));
   };
